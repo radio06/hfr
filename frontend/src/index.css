@@ -1,0 +1,38 @@
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  background: #0a0f1e;
+}
+
+#root {
+  height: 100vh;
+  width: 100vw;
+}
+
+/* ── 모바일 (640px 이하) ── */
+@media (max-width: 640px) {
+  body {
+    overflow-y: auto;
+  }
+  #root {
+    height: auto;
+    min-height: 100vh;
+  }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track { background: #0f172a; }
+::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #475569; }
