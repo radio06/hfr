@@ -72,29 +72,39 @@ export interface BacktestResult {
   name: string;
 }
 
-export function useBacktest(system: 1 | 2, years = 5) {
+function _useFetch(url: string, deps: unknown[]) {
   const [data, setData]       = useState<BacktestResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState<string | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
     setLoading(true);
     setError(null);
-    const API = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
-    fetch(`${API}/api/backtest?system=${system}&years=${years}`)
+    fetch(url)
       .then((res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json() as Promise<BacktestResult>;
       })
       .then((json) => {
-        setData(json);
-        setLoading(false);
+        if (!cancelled) { setData(json); setLoading(false); }
       })
       .catch((err: Error) => {
-        setError(err.message);
-        setLoading(false);
+        if (!cancelled) { setError(err.message); setLoading(false); }
       });
-  }, [system, years]);
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, deps);
 
   return { data, loading, error };
+}
+
+export function useBacktest(system: 1 | 2, years = 5) {
+  const API = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
+  return _useFetch(`${API}/api/backtest?system=${system}&years=${years}`, [system, years]);
+}
+
+export function useIscBacktest() {
+  const API = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
+  return _useFetch(`${API}/api/backtest/isc`, []);
 }

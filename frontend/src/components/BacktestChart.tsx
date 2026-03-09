@@ -159,14 +159,16 @@ export default function BacktestChart({ data }: Props) {
     );
     eqChart.timeScale().fitContent();
 
+    let disposed = false;
+
     // 리사이즈 옵저버
     const mainRo = new ResizeObserver(() => {
-      if (mainRef.current)
+      if (!disposed && mainRef.current)
         mainChart.applyOptions({ width: mainRef.current.clientWidth,
                                   height: mainRef.current.clientHeight });
     });
     const eqRo = new ResizeObserver(() => {
-      if (equityRef.current)
+      if (!disposed && equityRef.current)
         eqChart.applyOptions({ width: equityRef.current.clientWidth,
                                 height: equityRef.current.clientHeight });
     });
@@ -174,16 +176,23 @@ export default function BacktestChart({ data }: Props) {
     eqRo.observe(equityRef.current);
 
     // 시간축 동기화
-    mainChart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
-      if (range) eqChart.timeScale().setVisibleLogicalRange(range);
-    });
-    eqChart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
-      if (range) mainChart.timeScale().setVisibleLogicalRange(range);
-    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const syncMainToEq = (range: any) => {
+      if (!disposed && range) eqChart.timeScale().setVisibleLogicalRange(range);
+    };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const syncEqToMain = (range: any) => {
+      if (!disposed && range) mainChart.timeScale().setVisibleLogicalRange(range);
+    };
+    mainChart.timeScale().subscribeVisibleLogicalRangeChange(syncMainToEq);
+    eqChart.timeScale().subscribeVisibleLogicalRangeChange(syncEqToMain);
 
     return () => {
+      disposed = true;
       mainRo.disconnect();
       eqRo.disconnect();
+      mainChart.timeScale().unsubscribeVisibleLogicalRangeChange(syncMainToEq);
+      eqChart.timeScale().unsubscribeVisibleLogicalRangeChange(syncEqToMain);
       mainChart.remove();
       eqChart.remove();
     };

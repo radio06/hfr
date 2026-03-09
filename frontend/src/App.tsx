@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useBacktest } from "./hooks/useBacktest";
+import { useBacktest, useIscBacktest } from "./hooks/useBacktest";
 import BacktestChart from "./components/BacktestChart";
 import MetricsPanel from "./components/MetricsPanel";
 
@@ -15,12 +15,18 @@ function useIsMobile() {
 }
 
 type SystemTab = 1 | 2;
+type TickerTab = "HFR" | "ISC";
 
 export default function App() {
+  const [ticker, setTicker]   = useState<TickerTab>("HFR");
   const [system, setSystem]   = useState<SystemTab>(1);
   const [years,  setYears]    = useState(5);
-  const { data, loading, error } = useBacktest(system, years);
   const isMobile = useIsMobile();
+
+  const hfrResult = useBacktest(system, years);
+  const iscResult = useIscBacktest();
+
+  const { data, loading, error } = ticker === "HFR" ? hfrResult : iscResult;
 
   return (
     <div style={{ ...styles.page, ...(isMobile ? mobileStyles.page : {}) }}>
@@ -29,48 +35,83 @@ export default function App() {
         <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
           <h1 style={styles.title}>
             터틀 트레이딩 백테스트
-            <span style={styles.badge}>HFR (230240.KQ)</span>
+            {ticker === "HFR" ? (
+              <span style={styles.badge}>HFR (230240.KQ)</span>
+            ) : (
+              <span style={{ ...styles.badge, color: "#38bdf8", background: "#0c4a6e44" }}>
+                ISC (095340.KQ) · 2020~2023
+              </span>
+            )}
           </h1>
           <p style={styles.sub}>Turtle Trading System · Donchian Breakout · Position Sizing by N(ATR)</p>
         </div>
 
         <div style={{ ...styles.controls, ...(isMobile ? mobileStyles.controls : {}) }}>
-          {/* 기간 선택 */}
+          {/* 종목 탭 */}
           <div style={styles.controlGroup}>
-            <span style={styles.controlLabel}>기간</span>
-            {([3, 5, 7, 10] as const).map((y) => (
-              <button
-                key={y}
-                style={{ ...styles.btn, ...(years === y ? styles.btnActive : {}) }}
-                onClick={() => setYears(y)}
-              >
-                {y}년
-              </button>
-            ))}
+            <span style={styles.controlLabel}>종목</span>
+            <button
+              style={{ ...styles.btn, ...(ticker === "HFR" ? styles.btnTicker1 : {}) }}
+              onClick={() => setTicker("HFR")}
+            >
+              HFR
+            </button>
+            <button
+              style={{ ...styles.btn, ...(ticker === "ISC" ? styles.btnTicker2 : {}) }}
+              onClick={() => setTicker("ISC")}
+            >
+              ISC
+            </button>
           </div>
 
-          {/* 시스템 탭 */}
-          <div style={styles.controlGroup}>
-            <span style={styles.controlLabel}>전략</span>
-            <button
-              style={{ ...styles.btn, ...(system === 1 ? styles.btnSys1 : {}) }}
-              onClick={() => setSystem(1)}
-            >
-              System 1 <span style={styles.btnSub}>20/10일</span>
-            </button>
-            <button
-              style={{ ...styles.btn, ...(system === 2 ? styles.btnSys2 : {}) }}
-              onClick={() => setSystem(2)}
-            >
-              System 2 <span style={styles.btnSub}>55/20일</span>
-            </button>
-          </div>
+          {/* 기간·시스템 (HFR일 때만) */}
+          {ticker === "HFR" && (
+            <>
+              <div style={styles.controlGroup}>
+                <span style={styles.controlLabel}>기간</span>
+                {([3, 5, 7, 10] as const).map((y) => (
+                  <button
+                    key={y}
+                    style={{ ...styles.btn, ...(years === y ? styles.btnActive : {}) }}
+                    onClick={() => setYears(y)}
+                  >
+                    {y}년
+                  </button>
+                ))}
+              </div>
+
+              <div style={styles.controlGroup}>
+                <span style={styles.controlLabel}>전략</span>
+                <button
+                  style={{ ...styles.btn, ...(system === 1 ? styles.btnSys1 : {}) }}
+                  onClick={() => setSystem(1)}
+                >
+                  System 1 <span style={styles.btnSub}>20/10일</span>
+                </button>
+                <button
+                  style={{ ...styles.btn, ...(system === 2 ? styles.btnSys2 : {}) }}
+                  onClick={() => setSystem(2)}
+                >
+                  System 2 <span style={styles.btnSub}>55/20일</span>
+                </button>
+              </div>
+            </>
+          )}
         </div>
       </header>
 
       {/* ── 시스템 설명 배너 ── */}
       <div style={styles.banner}>
-        {system === 1 ? (
+        {ticker === "ISC" ? (
+          <>
+            <BannerTag color="#38bdf8">종목</BannerTag> 아이에스씨 (095340.KQ) · 코스닥 &nbsp;
+            <BannerTag color="#f59e0b">기간</BannerTag> 2020.01.01 ~ 2023.12.31 고정 &nbsp;
+            <BannerTag color="#f59e0b">진입</BannerTag> 20일 최고/저가 돌파 &nbsp;
+            <BannerTag color="#64748b">청산</BannerTag> 10일 역돌파 &nbsp;
+            <BannerTag color="#6366f1">스킵룰</BannerTag> 직전 승리 시 건너뜀 &nbsp;
+            <BannerTag color="#22c55e">피라미딩</BannerTag> 0.5N·최대4단위
+          </>
+        ) : system === 1 ? (
           <>
             <BannerTag color="#f59e0b">진입</BannerTag> 20일 최고/저가 돌파 &nbsp;
             <BannerTag color="#64748b">청산</BannerTag> 10일 역돌파 &nbsp;
@@ -95,7 +136,9 @@ export default function App() {
           <div style={styles.center}>
             <div style={styles.spinner} />
             <p style={{ color: "#64748b", fontSize: 14, marginTop: 16 }}>
-              백테스트 계산 중... (데이터 다운로드 + 전략 시뮬레이션)
+              {ticker === "ISC"
+                ? "ISC 백테스트 계산 중... (2020~2023)"
+                : "백테스트 계산 중... (데이터 다운로드 + 전략 시뮬레이션)"}
             </p>
           </div>
         )}
@@ -118,7 +161,7 @@ export default function App() {
               <MetricsPanel
                 metrics={data.metrics}
                 trades={data.trades}
-                system={system}
+                system={ticker === "ISC" ? 1 : system}
                 isMobile={isMobile}
               />
             </div>
@@ -262,6 +305,16 @@ const styles: Record<string, React.CSSProperties> = {
   btnActive: {
     background: "#334155",
     color: "#f1f5f9",
+  },
+  btnTicker1: {
+    background: "#1e3a5f",
+    color: "#60a5fa",
+    fontWeight: 700,
+  },
+  btnTicker2: {
+    background: "#0c4a6e44",
+    color: "#38bdf8",
+    fontWeight: 700,
   },
   btnSys1: {
     background: "#92400e44",

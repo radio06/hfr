@@ -16,6 +16,7 @@ app.add_middleware(
 )
 
 TICKER = "230240.KQ"
+ISC_TICKER = "095340.KQ"
 INITIAL_CAPITAL = 100_000_000  # 1억원
 RISK_PCT = 0.01               # 단위당 1% 리스크
 
@@ -34,6 +35,25 @@ def _fetch_df(years: int) -> pd.DataFrame:
     )
     if df.empty:
         raise HTTPException(status_code=404, detail="No data found")
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.get_level_values(0)
+    df = df.dropna().sort_index()
+    df.index = pd.to_datetime(df.index)
+    return df
+
+
+def _fetch_df_range(ticker: str, start: str, end: str) -> pd.DataFrame:
+    """지정 종목·기간 데이터 로드 (ATR 워밍업용 여유 120일 포함)"""
+    start_dt = datetime.strptime(start, "%Y-%m-%d") - timedelta(days=120)
+    df = yf.download(
+        ticker,
+        start=start_dt.strftime("%Y-%m-%d"),
+        end=end,
+        progress=False,
+        auto_adjust=True,
+    )
+    if df.empty:
+        raise HTTPException(status_code=404, detail=f"No data found for {ticker}")
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
     df = df.dropna().sort_index()
@@ -345,6 +365,46 @@ def get_backtest(
     ]
     result["ticker"] = TICKER
     result["name"]   = "HFR (에이치에프알)"
+    return result
+
+
+@app.get("/api/backtest/isc")
+def get_backtest_isc():
+    """코스닥 ISC (095340.KQ) 터틀 System 1 백테스트 · 2020~2023 고정"""
+    BACKTEST_START = "2020-01-01"
+    BACKTEST_END   = "2023-12-31"
+
+    df_full = _fetch_df_range(ISC_TICKER, BACKTEST_START, BACKTEST_END)
+
+    # 백테스트 구간은 2020~2023으로 제한, 워밍업(2019년 후반)은 포함된 채로 계산
+    result = _run_backtest(df_full, system=1,
+                           initial_capital=INITIAL_CAPITAL,
+                           risk_pct=RISK_PCT)
+
+    # 2020-01-01 이후 OHLCV만 프론트에 전달 (채널·에쿼티는 전체 유지)
+    cutoff = int(datetime(2020, 1, 1).timestamp())
+    result["ohlcv"] = [
+        {"time": int(idx.timestamp()),
+         "open":  round(float(r["Open"]),  2),
+         "high":  round(float(r["High"]),  2),
+         "low":   round(float(r["Low"]),   2),
+         "close": round(float(r["Close"]), 2),
+         "volume": int(r["Volume"])}
+        for idx, r in df_full.iterrows()
+        if int(idx.timestamp()) >= cutoff
+    ]
+    result["channels"] = {
+        k: [p for p in v if p["time"] >= cutoff]
+        for k, v in result["channels"].items()
+    }
+    result["equity_curve"] = [
+        e for e in result["equity_curve"] if e["time"] >= cutoff
+    ]
+    result["signals"] = [
+        s for s in result["signals"] if s["time"] >= cutoff
+    ]
+    result["ticker"] = ISC_TICKER
+    result["name"]   = "ISC (아이에스씨)"
     return result
 
 
