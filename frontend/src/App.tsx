@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useBacktest, useIscBacktest } from "./hooks/useBacktest";
+import { useActiveBacktest } from "./hooks/useBacktest";
 import BacktestChart from "./components/BacktestChart";
 import MetricsPanel from "./components/MetricsPanel";
 
@@ -22,11 +22,7 @@ export default function App() {
   const [system, setSystem]   = useState<SystemTab>(1);
   const [years,  setYears]    = useState(5);
   const isMobile = useIsMobile();
-
-  const hfrResult = useBacktest(system, years);
-  const iscResult = useIscBacktest();
-
-  const { data, loading, error } = ticker === "HFR" ? hfrResult : iscResult;
+  const { data, loading, error } = useActiveBacktest(ticker, system, years);
 
   return (
     <div style={{ ...styles.page, ...(isMobile ? mobileStyles.page : {}) }}>
@@ -109,7 +105,7 @@ export default function App() {
             <BannerTag color="#f59e0b">진입</BannerTag> 20일 최고/저가 돌파 &nbsp;
             <BannerTag color="#64748b">청산</BannerTag> 10일 역돌파 &nbsp;
             <BannerTag color="#6366f1">스킵룰</BannerTag> 직전 승리 시 건너뜀 &nbsp;
-            <BannerTag color="#22c55e">피라미딩</BannerTag> 0.5N·최대4단위
+            <BannerTag color="#22c55e">피라미딩</BannerTag> 1.0N마다 최대 4단위 추가
           </>
         ) : system === 1 ? (
           <>
@@ -154,7 +150,7 @@ export default function App() {
           <div style={{ ...styles.body, ...(isMobile ? mobileStyles.body : {}) }}>
             {/* 차트 영역 */}
             <div style={{ ...styles.chartArea, ...(isMobile ? mobileStyles.chartArea : {}) }}>
-              <BacktestChart data={data} />
+              <BacktestChart key={ticker === "HFR" ? `hfr-${system}-${years}` : "isc"} data={data} />
             </div>
             {/* 지표 패널 */}
             <div style={{ ...styles.sidePanel, ...(isMobile ? mobileStyles.sidePanel : {}) }}>

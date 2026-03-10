@@ -84,7 +84,12 @@ def _compute_N(df: pd.DataFrame, period: int = 20) -> pd.Series:
 # ── 핵심 백테스트 ──────────────────────────────────────────────────────────────
 
 def _run_backtest(df: pd.DataFrame, system: int,
-                  initial_capital: float, risk_pct: float) -> dict:
+                  initial_capital: float, risk_pct: float,
+                  pyramid_n_mult: float = 0.5,
+                  trade_start_ts: int | None = None) -> dict:
+    """
+    trade_start_ts: 이 타임스탬프 이전에는 진입 불가 (워밍업 기간 격리용)
+    """
     entry_period = 20 if system == 1 else 55
     exit_period  = 10 if system == 1 else 20
 
@@ -174,7 +179,7 @@ def _run_backtest(df: pd.DataFrame, system: int,
                 pos = 0; units = 0; ep_list = []
 
         # ── 피라미딩 (최대 4단위) ─────────────────────────────────────────────
-        if pos == 1 and units < 4 and cl >= last_add + 0.5 * n:
+        if pos == 1 and units < 4 and cl >= last_add + pyramid_n_mult * n:
             ep_list.append(cl)
             avg_ep   = sum(ep_list) / len(ep_list)
             stop     = avg_ep - 2 * n
@@ -182,7 +187,7 @@ def _run_backtest(df: pd.DataFrame, system: int,
             units   += 1
             signals.append({"time": ts, "type": "add_long",  "price": round(cl, 2)})
 
-        elif pos == -1 and units < 4 and cl <= last_add - 0.5 * n:
+        elif pos == -1 and units < 4 and cl <= last_add - pyramid_n_mult * n:
             ep_list.append(cl)
             avg_ep   = sum(ep_list) / len(ep_list)
             stop     = avg_ep + 2 * n
@@ -191,7 +196,7 @@ def _run_backtest(df: pd.DataFrame, system: int,
             signals.append({"time": ts, "type": "add_short", "price": round(cl, 2)})
 
         # ── 진입 ──────────────────────────────────────────────────────────────
-        if pos == 0:
+        if pos == 0 and (trade_start_ts is None or ts >= trade_start_ts):
             if not np.isnan(float(eh)) and hi > float(eh):
                 # System 1: 직전 롱이 수익이었으면 건너뜀
                 skip = (system == 1 and last_long_win is True)
@@ -372,17 +377,17 @@ def get_backtest(
 def get_backtest_isc():
     """코스닥 ISC (095340.KQ) 터틀 System 1 백테스트 · 2020~2023 고정"""
     BACKTEST_START = "2020-01-01"
-    BACKTEST_END   = "2023-12-31"
+    BACKTEST_END   = "2024-01-01"   # yfinance end는 exclusive → 2023-12-31 포함
 
     df_full = _fetch_df_range(ISC_TICKER, BACKTEST_START, BACKTEST_END)
 
-    # 백테스트 구간은 2020~2023으로 제한, 워밍업(2019년 후반)은 포함된 채로 계산
+    # 2020-01-01 이전은 채널 워밍업만 — 실제 진입은 2020-01-01부터
+    cutoff = int(datetime(2020, 1, 1).timestamp())
     result = _run_backtest(df_full, system=1,
                            initial_capital=INITIAL_CAPITAL,
-                           risk_pct=RISK_PCT)
-
-    # 2020-01-01 이후 OHLCV만 프론트에 전달 (채널·에쿼티는 전체 유지)
-    cutoff = int(datetime(2020, 1, 1).timestamp())
+                           risk_pct=RISK_PCT,
+                           pyramid_n_mult=1.0,
+                           trade_start_ts=cutoff)
     result["ohlcv"] = [
         {"time": int(idx.timestamp()),
          "open":  round(float(r["Open"]),  2),

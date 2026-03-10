@@ -108,3 +108,19 @@ export function useIscBacktest() {
   const API = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
   return _useFetch(`${API}/api/backtest/isc`, []);
 }
+
+/**
+ * 탭 전환에 반응하는 통합 훅 — URL이 바뀔 때마다 자동 re-fetch
+ */
+export function useActiveBacktest(
+  ticker: "HFR" | "ISC",
+  system: 1 | 2,
+  years: number,
+) {
+  const API = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
+  const url =
+    ticker === "ISC"
+      ? `${API}/api/backtest/isc`
+      : `${API}/api/backtest?system=${system}&years=${years}`;
+  return _useFetch(url, [url]);
+}
