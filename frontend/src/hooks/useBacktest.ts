@@ -72,55 +72,29 @@ export interface BacktestResult {
   name: string;
 }
 
-function _useFetch(url: string, deps: unknown[]) {
+export function useBacktest(system: 1 | 2, years = 5) {
   const [data, setData]       = useState<BacktestResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState<string | null>(null);
 
   useEffect(() => {
-    let cancelled = false;
     setLoading(true);
     setError(null);
-    fetch(url)
+    const API = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
+    fetch(`${API}/api/backtest?system=${system}&years=${years}`)
       .then((res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json() as Promise<BacktestResult>;
       })
       .then((json) => {
-        if (!cancelled) { setData(json); setLoading(false); }
+        setData(json);
+        setLoading(false);
       })
       .catch((err: Error) => {
-        if (!cancelled) { setError(err.message); setLoading(false); }
+        setError(err.message);
+        setLoading(false);
       });
-    return () => { cancelled = true; };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, deps);
+  }, [system, years]);
 
   return { data, loading, error };
-}
-
-export function useBacktest(system: 1 | 2, years = 5) {
-  const API = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
-  return _useFetch(`${API}/api/backtest?system=${system}&years=${years}`, [system, years]);
-}
-
-export function useIscBacktest() {
-  const API = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
-  return _useFetch(`${API}/api/backtest/isc`, []);
-}
-
-/**
- * 탭 전환에 반응하는 통합 훅 — URL이 바뀔 때마다 자동 re-fetch
- */
-export function useActiveBacktest(
-  ticker: "HFR" | "ISC",
-  system: 1 | 2,
-  years: number,
-) {
-  const API = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
-  const url =
-    ticker === "ISC"
-      ? `${API}/api/backtest/isc`
-      : `${API}/api/backtest?system=${system}&years=${years}`;
-  return _useFetch(url, [url]);
 }
