@@ -72,7 +72,13 @@ export interface BacktestResult {
   name: string;
 }
 
-export function useBacktest(system: 1 | 2, years = 5) {
+export function useBacktest(
+  stock: string,
+  system: 1 | 2,
+  years = 5,
+  entryPeriod?: number,
+  exitPeriod?: number,
+) {
   const [data, setData]       = useState<BacktestResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState<string | null>(null);
@@ -81,7 +87,10 @@ export function useBacktest(system: 1 | 2, years = 5) {
     setLoading(true);
     setError(null);
     const API = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
-    fetch(`${API}/api/backtest?system=${system}&years=${years}`)
+    let url = `${API}/api/backtest?stock=${encodeURIComponent(stock)}&system=${system}&years=${years}`;
+    if (entryPeriod != null) url += `&entry_period=${entryPeriod}`;
+    if (exitPeriod != null) url += `&exit_period=${exitPeriod}`;
+    fetch(url)
       .then((res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json() as Promise<BacktestResult>;
@@ -94,7 +103,7 @@ export function useBacktest(system: 1 | 2, years = 5) {
         setError(err.message);
         setLoading(false);
       });
-  }, [system, years]);
+  }, [stock, system, years, entryPeriod, exitPeriod]);
 
   return { data, loading, error };
 }

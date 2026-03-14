@@ -1,7 +1,9 @@
 import { useState, useEffect } from "react";
 import { useBacktest } from "./hooks/useBacktest";
+import { useGaResult } from "./hooks/useGaResult";
 import BacktestChart from "./components/BacktestChart";
 import MetricsPanel from "./components/MetricsPanel";
+import GaOptPanel from "./components/GaOptPanel";
 
 function useIsMobile() {
   const [isMobile, setIsMobile] = useState(() => window.innerWidth <= 640);
@@ -14,12 +16,32 @@ function useIsMobile() {
   return isMobile;
 }
 
-type SystemTab = 1 | 2;
+type SystemTab = 1 | 2 | "ga";
+
+const STOCK_LIST = [
+  { key: "HFR",    label: "HFR" },
+  { key: "동국홀딩스", label: "동국홀딩스" },
+  { key: "누리플렉스", label: "누리플렉스" },
+  { key: "한국카본",  label: "한국카본" },
+  { key: "디지틀조선", label: "디지틀조선" },
+  { key: "진성티이씨", label: "진성티이씨" },
+  { key: "태광",    label: "태광" },
+];
 
 export default function App() {
+  const [stock,  setStock]    = useState("HFR");
   const [system, setSystem]   = useState<SystemTab>(1);
   const [years,  setYears]    = useState(5);
-  const { data, loading, error } = useBacktest(system, years);
+
+  // GA 결과 훅 (항상 호출, system과 무관)
+  const gaHook = useGaResult(stock, years);
+
+  // GA 탭에서 결과가 있으면 해당 파라미터로 백테스트, 없으면 System 1 기본
+  const btSystem: 1 | 2 = system === "ga" ? 2 : system;
+  const btEntryPeriod = system === "ga" && gaHook.result ? gaHook.result.entry_period : undefined;
+  const btExitPeriod = system === "ga" && gaHook.result ? gaHook.result.exit_period : undefined;
+
+  const { data, loading, error } = useBacktest(stock, btSystem, years, btEntryPeriod, btExitPeriod);
   const isMobile = useIsMobile();
 
   return (
@@ -29,12 +51,26 @@ export default function App() {
         <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
           <h1 style={styles.title}>
             터틀 트레이딩 백테스트
-            <span style={styles.badge}>HFR (230240.KQ)</span>
+            {data && <span style={styles.badge}>{data.name} ({data.ticker})</span>}
           </h1>
           <p style={styles.sub}>Turtle Trading System · Donchian Breakout · Position Sizing by N(ATR)</p>
         </div>
 
         <div style={{ ...styles.controls, ...(isMobile ? mobileStyles.controls : {}) }}>
+          {/* 종목 선택 */}
+          <div style={{ ...styles.controlGroup, flexWrap: "wrap" }}>
+            <span style={styles.controlLabel}>종목</span>
+            {STOCK_LIST.map((s) => (
+              <button
+                key={s.key}
+                style={{ ...styles.btn, ...(stock === s.key ? styles.btnStock : {}) }}
+                onClick={() => setStock(s.key)}
+              >
+                {s.label}
+              </button>
+            ))}
+          </div>
+
           {/* 기간 선택 */}
           <div style={styles.controlGroup}>
             <span style={styles.controlLabel}>기간</span>
@@ -64,6 +100,12 @@ export default function App() {
             >
               System 2 <span style={styles.btnSub}>55/20일</span>
             </button>
+            <button
+              style={{ ...styles.btn, ...(system === "ga" ? styles.btnGa : {}) }}
+              onClick={() => setSystem("ga")}
+            >
+              GA 최적화 <span style={styles.btnSub}>자동탐색</span>
+            </button>
           </div>
         </div>
       </header>
@@ -77,12 +119,25 @@ export default function App() {
             <BannerTag color="#6366f1">스킵룰</BannerTag> 직전 승리 시 동방향 다음 신호 건너뜀 &nbsp;
             <BannerTag color="#22c55e">피라미딩</BannerTag> 0.5N마다 최대 4단위 추가
           </>
-        ) : (
+        ) : system === 2 ? (
           <>
             <BannerTag color="#f59e0b">진입</BannerTag> 55일 최고/저가 돌파 &nbsp;
             <BannerTag color="#64748b">청산</BannerTag> 20일 역돌파 &nbsp;
             <BannerTag color="#6366f1">스킵룰 없음</BannerTag> 모든 신호 진입 &nbsp;
             <BannerTag color="#22c55e">피라미딩</BannerTag> 0.5N마다 최대 4단위 추가
+          </>
+        ) : (
+          <>
+            <BannerTag color="#8b5cf6">GA</BannerTag> 유전 알고리즘 파라미터 최적화 &nbsp;
+            {gaHook.result ? (
+              <>
+                <BannerTag color="#f59e0b">진입</BannerTag> {gaHook.result.entry_period}일 &nbsp;
+                <BannerTag color="#64748b">청산</BannerTag> {gaHook.result.exit_period}일 &nbsp;
+                <BannerTag color="#22c55e">Calmar</BannerTag> {gaHook.result.metrics.calmar.toFixed(2)}
+              </>
+            ) : (
+              <span style={{ color: "#64748b" }}>최적화를 실행하세요</span>
+            )}
           </>
         )}
         &nbsp;·&nbsp;
@@ -111,16 +166,36 @@ export default function App() {
           <div style={{ ...styles.body, ...(isMobile ? mobileStyles.body : {}) }}>
             {/* 차트 영역 */}
             <div style={{ ...styles.chartArea, ...(isMobile ? mobileStyles.chartArea : {}) }}>
-              <BacktestChart data={data} />
+              <BacktestChart key={`${stock}-${system}-${years}`} data={data} />
             </div>
             {/* 지표 패널 */}
             <div style={{ ...styles.sidePanel, ...(isMobile ? mobileStyles.sidePanel : {}) }}>
-              <MetricsPanel
-                metrics={data.metrics}
-                trades={data.trades}
-                system={system}
-                isMobile={isMobile}
-              />
+              {system === "ga" ? (
+                <>
+                  <GaOptPanel
+                    result={gaHook.result}
+                    loading={gaHook.loading}
+                    optimizing={gaHook.optimizing}
+                    error={gaHook.error}
+                    onOptimize={gaHook.optimize}
+                  />
+                  {gaHook.result && (
+                    <MetricsPanel
+                      metrics={data.metrics}
+                      trades={data.trades}
+                      system={2}
+                      isMobile={isMobile}
+                    />
+                  )}
+                </>
+              ) : (
+                <MetricsPanel
+                  metrics={data.metrics}
+                  trades={data.trades}
+                  system={system}
+                  isMobile={isMobile}
+                />
+              )}
             </div>
           </div>
         )}
@@ -259,6 +334,11 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: "center",
     gap: 4,
   },
+  btnStock: {
+    background: "#0e4a2e44",
+    color: "#22c55e",
+    fontWeight: 700,
+  },
   btnActive: {
     background: "#334155",
     color: "#f1f5f9",
@@ -271,6 +351,11 @@ const styles: Record<string, React.CSSProperties> = {
   btnSys2: {
     background: "#312e8144",
     color: "#818cf8",
+    fontWeight: 700,
+  },
+  btnGa: {
+    background: "#581c8744",
+    color: "#a78bfa",
     fontWeight: 700,
   },
   btnSub: {

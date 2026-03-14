@@ -4,8 +4,18 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
+from contextlib import asynccontextmanager
 
-app = FastAPI(title="HFR Turtle Backtest API")
+from database import init_db, upsert_result, get_result
+from ga_optimizer import run_ga
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    init_db()
+    yield
+
+app = FastAPI(title="HFR Turtle Backtest API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -15,25 +25,34 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-TICKER = "230240.KQ"
 INITIAL_CAPITAL = 100_000_000  # 1억원
 RISK_PCT = 0.01               # 단위당 1% 리스크
+
+STOCKS = {
+    "HFR":    {"ticker": "230240.KQ", "name": "HFR (에이치에프알)",     "exchange": "코스닥"},
+    "동국홀딩스": {"ticker": "001230.KS", "name": "동국홀딩스",          "exchange": "코스피"},
+    "누리플렉스": {"ticker": "040160.KQ", "name": "누리플렉스",          "exchange": "코스닥"},
+    "한국카본":  {"ticker": "017960.KS", "name": "한국카본",            "exchange": "코스피"},
+    "디지틀조선": {"ticker": "033130.KQ", "name": "디지틀조선",          "exchange": "코스닥"},
+    "진성티이씨": {"ticker": "036890.KQ", "name": "진성티이씨",          "exchange": "코스닥"},
+    "태광":    {"ticker": "023160.KS", "name": "태광",               "exchange": "코스피"},
+}
 
 
 # ── 데이터 로드 ────────────────────────────────────────────────────────────────
 
-def _fetch_df(years: int) -> pd.DataFrame:
+def _fetch_df(ticker: str, years: int) -> pd.DataFrame:
     end = datetime.today()
     start = end - timedelta(days=365 * years + 120)
     df = yf.download(
-        TICKER,
+        ticker,
         start=start.strftime("%Y-%m-%d"),
         end=end.strftime("%Y-%m-%d"),
         progress=False,
         auto_adjust=True,
     )
     if df.empty:
-        raise HTTPException(status_code=404, detail="No data found")
+        raise HTTPException(status_code=404, detail=f"No data found for {ticker}")
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
     df = df.dropna().sort_index()
@@ -64,9 +83,13 @@ def _compute_N(df: pd.DataFrame, period: int = 20) -> pd.Series:
 # ── 핵심 백테스트 ──────────────────────────────────────────────────────────────
 
 def _run_backtest(df: pd.DataFrame, system: int,
-                  initial_capital: float, risk_pct: float) -> dict:
-    entry_period = 20 if system == 1 else 55
-    exit_period  = 10 if system == 1 else 20
+                  initial_capital: float, risk_pct: float,
+                  entry_period: int | None = None,
+                  exit_period: int | None = None) -> dict:
+    if entry_period is None:
+        entry_period = 20 if system == 1 else 55
+    if exit_period is None:
+        exit_period  = 10 if system == 1 else 20
 
     N_series = _compute_N(df, 20)
 
@@ -308,32 +331,30 @@ def _calc_metrics(equity: list[dict], trades: list[dict],
 
 # ── 엔드포인트 ─────────────────────────────────────────────────────────────────
 
-@app.get("/api/ohlcv")
-def get_ohlcv(years: int = 5):
-    df = _fetch_df(years)
-    records = [
-        {"time": int(idx.timestamp()),
-         "open":  round(float(r["Open"]),  2),
-         "high":  round(float(r["High"]),  2),
-         "low":   round(float(r["Low"]),   2),
-         "close": round(float(r["Close"]), 2),
-         "volume": int(r["Volume"])}
-        for idx, r in df.iterrows()
-    ]
-    return {"ticker": TICKER, "name": "HFR (에이치에프알)",
-            "count": len(records), "data": records}
+@app.get("/api/stocks")
+def get_stocks():
+    """프론트에서 종목 목록 표시용"""
+    return [{"key": k, **v} for k, v in STOCKS.items()]
 
 
 @app.get("/api/backtest")
 def get_backtest(
+    stock:  str = Query("HFR"),
     system: int = Query(1, ge=1, le=2),
     years:  int = Query(5, ge=1, le=10),
+    entry_period: int | None = Query(None, ge=15, le=60),
+    exit_period:  int | None = Query(None, ge=5, le=25),
 ):
-    df     = _fetch_df(years)
+    info = STOCKS.get(stock)
+    if not info:
+        raise HTTPException(status_code=400, detail=f"Unknown stock: {stock}")
+
+    df     = _fetch_df(info["ticker"], years)
     result = _run_backtest(df, system=system,
                            initial_capital=INITIAL_CAPITAL,
-                           risk_pct=RISK_PCT)
-    # OHLCV 포함 (프론트에서 별도 호출 불필요)
+                           risk_pct=RISK_PCT,
+                           entry_period=entry_period,
+                           exit_period=exit_period)
     result["ohlcv"] = [
         {"time": int(idx.timestamp()),
          "open":  round(float(r["Open"]),  2),
@@ -343,9 +364,55 @@ def get_backtest(
          "volume": int(r["Volume"])}
         for idx, r in df.iterrows()
     ]
-    result["ticker"] = TICKER
-    result["name"]   = "HFR (에이치에프알)"
+    result["ticker"] = info["ticker"]
+    result["name"]   = info["name"]
     return result
+
+
+def _backtest_for_ga(df: pd.DataFrame, entry_period: int, exit_period: int,
+                     initial_capital: float, risk_pct: float) -> dict:
+    """GA 최적화용 래퍼 — skip rule 없이 실행 (system=2 베이스)"""
+    return _run_backtest(df, system=2,
+                         initial_capital=initial_capital,
+                         risk_pct=risk_pct,
+                         entry_period=entry_period,
+                         exit_period=exit_period)
+
+
+@app.post("/api/ga/optimize")
+def ga_optimize(
+    stock: str = Query("HFR"),
+    years: int = Query(5, ge=1, le=10),
+):
+    info = STOCKS.get(stock)
+    if not info:
+        raise HTTPException(status_code=400, detail=f"Unknown stock: {stock}")
+
+    df = _fetch_df(info["ticker"], years)
+    result = run_ga(df, _backtest_for_ga, INITIAL_CAPITAL, RISK_PCT)
+
+    upsert_result(stock, years, result["entry_period"],
+                  result["exit_period"], result["metrics"])
+
+    return {
+        "stock_key": stock,
+        "years": years,
+        "entry_period": result["entry_period"],
+        "exit_period": result["exit_period"],
+        "calmar": result["calmar"],
+        "metrics": result["metrics"],
+    }
+
+
+@app.get("/api/ga/result")
+def ga_result(
+    stock: str = Query("HFR"),
+    years: int = Query(5, ge=1, le=10),
+):
+    row = get_result(stock, years)
+    if not row:
+        return {"found": False}
+    return {"found": True, **row}
 
 
 @app.get("/api/health")
